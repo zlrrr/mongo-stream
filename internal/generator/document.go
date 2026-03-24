@@ -12,8 +12,10 @@ import (
 type Document = bson.D
 
 // Generator produces random BSON documents.
+// A Generator must not be used concurrently from multiple goroutines.
 type Generator struct {
-	rng *rand.Rand
+	seed int64
+	rng  *rand.Rand
 }
 
 // New creates a Generator. If seed == 0, a time-based seed is used.
@@ -21,8 +23,12 @@ func New(seed int64) *Generator {
 	if seed == 0 {
 		seed = time.Now().UnixNano()
 	}
-	return &Generator{rng: rand.New(rand.NewSource(seed))} //nolint:gosec
+	return &Generator{seed: seed, rng: rand.New(rand.NewSource(seed))} //nolint:gosec
 }
+
+// Seed returns the seed that was used to initialise this Generator.
+// Writers use it to derive unique seeds for per-worker Generator instances.
+func (g *Generator) Seed() int64 { return g.seed }
 
 var tagPool = []string{
 	"alpha", "beta", "gamma", "delta", "epsilon",
