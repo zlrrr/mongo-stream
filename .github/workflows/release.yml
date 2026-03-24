@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+            archive: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          GONOSUMDB: '*'
+          GOFLAGS: '-mod=mod'
+        run: |
+          BINARY=mongo-stream${{ matrix.ext }}
+          go build \
+            -trimpath \
+            -ldflags="-s -w -X main.version=${{ github.ref_name }}" \
+            -o "$BINARY" \
+            .
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          ARTIFACT="mongo-stream_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          tar -czf "$ARTIFACT" mongo-stream README.md README_zh.md LICENSE
+          echo "ARTIFACT=$ARTIFACT" >> "$GITHUB_ENV"
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        run: |
+          ARTIFACT="mongo-stream_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          zip "$ARTIFACT" mongo-stream.exe README.md README_zh.md LICENSE
+          echo "ARTIFACT=$ARTIFACT" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mongo-stream_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: ${{ env.ARTIFACT }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
