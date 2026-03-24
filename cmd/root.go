@@ -21,10 +21,17 @@ import (
 
 var cfg = config.Default()
 
+// appVersion is injected by main via SetVersion.
+var appVersion = "dev"
+
+// SetVersion lets main.go pass the build-time version string.
+func SetVersion(v string) { appVersion = v }
+
 // rootCmd is the main cobra command.
 var rootCmd = &cobra.Command{
-	Use:   "mongo-stream",
-	Short: "Stream random documents into MongoDB for load testing",
+	Use:     "mongo-stream",
+	Version: appVersion,
+	Short:   "Stream random documents into MongoDB for load testing",
 	Long: `mongo-stream connects to a MongoDB deployment and continuously writes
 randomly-generated documents across a configurable set of databases and collections.
 
