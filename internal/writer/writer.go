@@ -27,9 +27,11 @@ type Writer struct {
 	client *mongo.Client
 	cfg    *config.Config
 	dist   distributor.Distributor
-	gen    *generator.Generator
-	log    *zap.Logger
-	stats  Stats
+	// baseSeed is used to derive per-worker seeds; each worker gets its own
+	// Generator so that rand.Rand is never shared across goroutines.
+	baseSeed int64
+	log      *zap.Logger
+	stats    Stats
 }
 
 // New creates a Writer.
@@ -41,11 +43,11 @@ func New(
 	log *zap.Logger,
 ) *Writer {
 	return &Writer{
-		client: client,
-		cfg:    cfg,
-		dist:   dist,
-		gen:    gen,
-		log:    log,
+		client:   client,
+		cfg:      cfg,
+		dist:     dist,
+		baseSeed: gen.Seed(),
+		log:      log,
 	}
 }
 
@@ -76,11 +78,14 @@ func (w *Writer) Run(ctx context.Context) error {
 
 	var wgWorkers sync.WaitGroup
 	for i := 0; i < w.cfg.Concurrency; i++ {
+		// Each worker gets its own Generator so that rand.Rand is never shared
+		// across goroutines (math/rand.(*Rand) is not goroutine-safe).
+		workerGen := generator.New(w.baseSeed + int64(i+1))
 		wgWorkers.Add(1)
-		go func() {
+		go func(g *generator.Generator) {
 			defer wgWorkers.Done()
-			w.workerLoop(ctx, jobs)
-		}()
+			w.workerLoop(ctx, jobs, g)
+		}(workerGen)
 	}
 
 	// Feed jobs.
@@ -124,7 +129,8 @@ func (w *Writer) Run(ctx context.Context) error {
 }
 
 // workerLoop consumes jobs and inserts batches.
-func (w *Writer) workerLoop(ctx context.Context, jobs <-chan int64) {
+// gen is the per-worker Generator; it must not be shared with other goroutines.
+func (w *Writer) workerLoop(ctx context.Context, jobs <-chan int64, gen *generator.Generator) {
 	for seq := range jobs {
 		if ctx.Err() != nil {
 			return
@@ -141,7 +147,7 @@ func (w *Writer) workerLoop(ctx context.Context, jobs <-chan int64) {
 			}
 		}
 
-		docs := w.gen.Batch(seq, batchSize)
+		docs := gen.Batch(seq, batchSize)
 		target := w.dist.Next(seq / int64(w.cfg.BatchSize))
 
 		coll := w.client.Database(target.DB).Collection(target.Collection)
