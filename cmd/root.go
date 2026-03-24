@@ -36,9 +36,9 @@ var rootCmd = &cobra.Command{
 randomly-generated documents across a configurable set of databases and collections.
 
 Distribution modes:
-  uniform   – writes are spread evenly across all targets (default)
-  gaussian  – coming soon
-  longtail  – coming soon`,
+  uniform   – round-robin; equal writes to every target (default)
+  gaussian  – bell-curve weighted; centre collections receive the most writes
+  longtail  – power-law (Zipf) weighted; a few hot collections dominate`,
 	RunE: runStream,
 }
 
@@ -100,8 +100,12 @@ func runStream(cmd *cobra.Command, _ []string) error {
 	switch cfg.Distribution {
 	case "uniform":
 		dist = distributor.NewUniform(cfg.DBs, cfg.Collections)
+	case "gaussian":
+		dist = distributor.NewGaussian(cfg.DBs, cfg.Collections)
+	case "longtail":
+		dist = distributor.NewLongtail(cfg.DBs, cfg.Collections)
 	default:
-		return fmt.Errorf("distribution %q not yet implemented", cfg.Distribution)
+		return fmt.Errorf("unsupported distribution %q: must be one of uniform, gaussian, longtail", cfg.Distribution)
 	}
 
 	gen := generator.New(0) // time-seeded
