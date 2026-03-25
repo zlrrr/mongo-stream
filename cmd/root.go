@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/zlrrr/mongo-stream/internal/distributor"
 	"github.com/zlrrr/mongo-stream/internal/generator"
 	"github.com/zlrrr/mongo-stream/internal/logger"
+	"github.com/zlrrr/mongo-stream/internal/webui"
 	"github.com/zlrrr/mongo-stream/internal/writer"
 )
 
@@ -63,6 +66,9 @@ func init() {
 	f.IntVar(&cfg.Concurrency, "concurrency", cfg.Concurrency, "Parallel writer goroutines")
 	f.DurationVar(&cfg.LogInterval, "log-interval", cfg.LogInterval, "Progress log interval")
 	f.StringVar(&cfg.Distribution, "distribution", cfg.Distribution, "Distribution mode: uniform|gaussian|longtail")
+	f.BoolVar(&cfg.WebUI, "webui", cfg.WebUI, "Start a web UI for monitoring run status")
+	f.IntVar(&cfg.WebUIPort, "webui-port", cfg.WebUIPort, "HTTP port for the web UI (requires --webui)")
+	f.StringVar(&cfg.WebUIBind, "webui-bind", cfg.WebUIBind, `Bind address for the web UI: "" / "0.0.0.0" = all interfaces, "127.0.0.1" = localhost only`)
 }
 
 func runStream(cmd *cobra.Command, _ []string) error {
@@ -111,10 +117,57 @@ func runStream(cmd *cobra.Command, _ []string) error {
 	gen := generator.New(0) // time-seeded
 	w := writer.New(client, cfg, dist, gen, log)
 
-	if err := w.Run(ctx); err != nil && err != context.Canceled {
-		return fmt.Errorf("writer: %w", err)
+	// Optionally start the web monitoring UI.
+	var (
+		srv         *webui.Server
+		webuiCancel context.CancelFunc
+		webuiWg     sync.WaitGroup
+	)
+	if cfg.WebUI {
+		webuiCtx, cancel := context.WithCancel(context.Background())
+		webuiCancel = cancel
+		srv = webui.New(
+			sanitize(cfg.URI),
+			cfg.Distribution,
+			cfg.Total,
+			cfg.BatchSize,
+			func() (int64, int64) {
+				s := w.Stats()
+				return s.DocsInserted, s.Errors
+			},
+		)
+		webuiWg.Add(1)
+		go func() {
+			defer webuiWg.Done()
+			if err := srv.Run(webuiCtx, cfg.WebUIBind, cfg.WebUIPort); err != nil {
+				log.Warn("webui server stopped", zap.Error(err))
+			}
+		}()
+		for _, u := range webui.AccessURLs(cfg.WebUIBind, cfg.WebUIPort) {
+			log.Info("web UI started", zap.String("url", u))
+		}
 	}
 
+	runErr := w.Run(ctx)
+
+	if srv != nil {
+		switch {
+		case runErr == nil:
+			srv.SetStatus("done")
+		case errors.Is(runErr, context.Canceled):
+			srv.SetStatus("stopped")
+		default:
+			srv.SetStatus("error")
+		}
+		// Brief grace period so the browser can pick up the final status.
+		time.Sleep(2 * time.Second)
+		webuiCancel()
+		webuiWg.Wait()
+	}
+
+	if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		return fmt.Errorf("writer: %w", runErr)
+	}
 	return nil
 }
 

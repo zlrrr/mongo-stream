@@ -100,6 +100,9 @@ INFO  run complete  docs_inserted=10000  errors=0
 | `--concurrency` | `4` | Number of parallel writer goroutines |
 | `--log-interval` | `5s` | How often to print progress (e.g. `2s`, `1m`) |
 | `--distribution` | `uniform` | Distribution mode: `uniform` \| `gaussian` \| `longtail` |
+| `--webui` | `false` | Start a web monitoring UI |
+| `--webui-port` | `8080` | HTTP port for the web UI (requires `--webui`) |
+| `--webui-bind` | `""` (all interfaces) | Bind address: `""` / `0.0.0.0` = LAN+local, `127.0.0.1` = localhost only |
 
 ---
 

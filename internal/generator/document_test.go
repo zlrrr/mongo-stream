@@ -53,6 +53,32 @@ func TestBatch_Types(t *testing.T) {
 	}
 }
 
+func TestBatch_Reuse(t *testing.T) {
+	g := New(42)
+	b1 := g.Batch(0, 10)
+	ptr1 := &b1[0]
+	b2 := g.Batch(100, 10)
+	ptr2 := &b2[0]
+	// Batch should reuse the underlying slice.
+	if ptr1 != ptr2 {
+		t.Error("expected Batch to reuse underlying slice")
+	}
+}
+
+func BenchmarkNext(b *testing.B) {
+	g := New(42)
+	for i := 0; i < b.N; i++ {
+		g.Next(int64(i))
+	}
+}
+
+func BenchmarkBatch100(b *testing.B) {
+	g := New(42)
+	for i := 0; i < b.N; i++ {
+		g.Batch(int64(i*100), 100)
+	}
+}
+
 func TestDeterministic(t *testing.T) {
 	// Same seed → same first payload.
 	g1 := New(1234)
