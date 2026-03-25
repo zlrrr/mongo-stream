@@ -100,6 +100,8 @@ INFO  run complete  docs_inserted=10000  errors=0
 | `--concurrency` | `4` | 并行写入协程数 |
 | `--log-interval` | `5s` | 进度日志输出间隔（如 `2s`、`1m`） |
 | `--distribution` | `uniform` | 分布模式：`uniform` \| `gaussian` \| `longtail` |
+| `--webui` | `false` | 启动 Web 监控界面 |
+| `--webui-port` | `8080` | Web 界面的 HTTP 端口（需同时指定 `--webui`） |
 
 ---
 

@@ -18,6 +18,8 @@ type Config struct {
 	Concurrency  int
 	LogInterval  time.Duration
 	Distribution string // "uniform" | "gaussian" | "longtail"
+	WebUI        bool   // enable the web monitoring UI
+	WebUIPort    int    // HTTP port for the web UI (default 8080)
 }
 
 // Default returns a Config with sensible defaults.
@@ -32,6 +34,8 @@ func Default() *Config {
 		Concurrency:  4,
 		LogInterval:  5 * time.Second,
 		Distribution: "uniform",
+		WebUI:        false,
+		WebUIPort:    8080,
 	}
 }
 
@@ -61,6 +65,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Total < 0 {
 		return errors.New("--total must be >= 0 (0 = unlimited)")
+	}
+	if c.WebUI && (c.WebUIPort < 1 || c.WebUIPort > 65535) {
+		return errors.New("--webui-port must be between 1 and 65535")
 	}
 	return nil
 }
