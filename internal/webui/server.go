@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -66,9 +67,19 @@ func (s *Server) SetStatus(status string) {
 	s.mu.Unlock()
 }
 
-// Run starts the HTTP server on the given port and blocks until ctx is
-// cancelled or the server encounters a fatal error.
-func (s *Server) Run(ctx context.Context, port int) error {
+// Run starts the HTTP server on bind:port and blocks until ctx is cancelled
+// or the server encounters a fatal error.
+//
+// bind controls which network interface to listen on:
+//   - ""          → same as "0.0.0.0" (all interfaces, default)
+//   - "0.0.0.0"   → all IPv4 interfaces (LAN + loopback)
+//   - "127.0.0.1" → loopback only (localhost)
+//   - specific IP → that interface only
+func (s *Server) Run(ctx context.Context, bind string, port int) error {
+	if bind == "" {
+		bind = "0.0.0.0"
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/status", s.handleStatus)
@@ -76,7 +87,7 @@ func (s *Server) Run(ctx context.Context, port int) error {
 	go s.rateLoop(ctx)
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", port),
+		Addr:         fmt.Sprintf("%s:%d", bind, port),
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
@@ -94,6 +105,49 @@ func (s *Server) Run(ctx context.Context, port int) error {
 		return fmt.Errorf("webui ListenAndServe: %w", err)
 	}
 	return nil
+}
+
+// AccessURLs returns the list of HTTP URLs at which the server can be reached.
+// When bind is "0.0.0.0" it enumerates every non-loopback unicast address on
+// the host so callers can print them all for the user's convenience.
+func AccessURLs(bind string, port int) []string {
+	if bind == "" {
+		bind = "0.0.0.0"
+	}
+	// Specific / loopback bind: only one URL.
+	if bind != "0.0.0.0" && bind != "::" {
+		return []string{fmt.Sprintf("http://%s:%d", bind, port)}
+	}
+
+	urls := []string{fmt.Sprintf("http://localhost:%d", port)}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return urls
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() || ip.To4() == nil {
+				continue // skip IPv6 and loopback
+			}
+			urls = append(urls, fmt.Sprintf("http://%s:%d", ip.String(), port))
+		}
+	}
+	return urls
 }
 
 // rateLoop samples stats every second to calculate docs/sec.

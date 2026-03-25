@@ -102,6 +102,7 @@ INFO  run complete  docs_inserted=10000  errors=0
 | `--distribution` | `uniform` | Distribution mode: `uniform` \| `gaussian` \| `longtail` |
 | `--webui` | `false` | Start a web monitoring UI |
 | `--webui-port` | `8080` | HTTP port for the web UI (requires `--webui`) |
+| `--webui-bind` | `""` (all interfaces) | Bind address: `""` / `0.0.0.0` = LAN+local, `127.0.0.1` = localhost only |
 
 ---
 

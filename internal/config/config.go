@@ -20,6 +20,7 @@ type Config struct {
 	Distribution string // "uniform" | "gaussian" | "longtail"
 	WebUI        bool   // enable the web monitoring UI
 	WebUIPort    int    // HTTP port for the web UI (default 8080)
+	WebUIBind    string // bind address for the web UI (default "" = 0.0.0.0)
 }
 
 // Default returns a Config with sensible defaults.
@@ -36,6 +37,7 @@ func Default() *Config {
 		Distribution: "uniform",
 		WebUI:        false,
 		WebUIPort:    8080,
+		WebUIBind:    "",
 	}
 }
 

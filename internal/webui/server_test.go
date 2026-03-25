@@ -101,12 +101,41 @@ func TestUnlimitedTotal_NoPct(t *testing.T) {
 	}
 }
 
+func TestAccessURLs_Localhost(t *testing.T) {
+	urls := AccessURLs("127.0.0.1", 8080)
+	if len(urls) != 1 || urls[0] != "http://127.0.0.1:8080" {
+		t.Errorf("unexpected urls: %v", urls)
+	}
+}
+
+func TestAccessURLs_AllInterfaces(t *testing.T) {
+	urls := AccessURLs("0.0.0.0", 8080)
+	// Must include localhost entry.
+	found := false
+	for _, u := range urls {
+		if u == "http://localhost:8080" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected localhost URL in %v", urls)
+	}
+}
+
+func TestAccessURLs_EmptyBind(t *testing.T) {
+	// Empty bind is treated the same as 0.0.0.0.
+	urls := AccessURLs("", 9090)
+	if len(urls) == 0 {
+		t.Error("expected at least one URL")
+	}
+}
+
 func TestRun_ServesOnPort(t *testing.T) {
 	srv := newTestServer()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Run(ctx, 0) }()
+	go func() { errCh <- srv.Run(ctx, "127.0.0.1", 0) }()
 
 	// Cancel immediately; server should shut down without error.
 	cancel()

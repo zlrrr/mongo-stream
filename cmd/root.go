@@ -68,6 +68,7 @@ func init() {
 	f.StringVar(&cfg.Distribution, "distribution", cfg.Distribution, "Distribution mode: uniform|gaussian|longtail")
 	f.BoolVar(&cfg.WebUI, "webui", cfg.WebUI, "Start a web UI for monitoring run status")
 	f.IntVar(&cfg.WebUIPort, "webui-port", cfg.WebUIPort, "HTTP port for the web UI (requires --webui)")
+	f.StringVar(&cfg.WebUIBind, "webui-bind", cfg.WebUIBind, `Bind address for the web UI: "" / "0.0.0.0" = all interfaces, "127.0.0.1" = localhost only`)
 }
 
 func runStream(cmd *cobra.Command, _ []string) error {
@@ -138,13 +139,13 @@ func runStream(cmd *cobra.Command, _ []string) error {
 		webuiWg.Add(1)
 		go func() {
 			defer webuiWg.Done()
-			if err := srv.Run(webuiCtx, cfg.WebUIPort); err != nil {
+			if err := srv.Run(webuiCtx, cfg.WebUIBind, cfg.WebUIPort); err != nil {
 				log.Warn("webui server stopped", zap.Error(err))
 			}
 		}()
-		log.Info("web UI started",
-			zap.String("url", fmt.Sprintf("http://localhost:%d", cfg.WebUIPort)),
-		)
+		for _, u := range webui.AccessURLs(cfg.WebUIBind, cfg.WebUIPort) {
+			log.Info("web UI started", zap.String("url", u))
+		}
 	}
 
 	runErr := w.Run(ctx)
