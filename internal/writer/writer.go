@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.uber.org/zap"
 
 	"github.com/zlrrr/mongo-stream/internal/config"
@@ -32,6 +33,11 @@ type Writer struct {
 	baseSeed int64
 	log      *zap.Logger
 	stats    Stats
+	// collCache maps each target to its pre-built *mongo.Collection handle,
+	// avoiding repeated Database().Collection() calls on the hot path.
+	collCache map[distributor.Target]*mongo.Collection
+	// insertOpts is the pre-built InsertMany options (ordered=false).
+	insertOpts *options.InsertManyOptionsBuilder
 }
 
 // New creates a Writer.
@@ -42,12 +48,28 @@ func New(
 	gen *generator.Generator,
 	log *zap.Logger,
 ) *Writer {
-	return &Writer{
-		client:   client,
-		cfg:      cfg,
-		dist:     dist,
-		baseSeed: gen.Seed(),
-		log:      log,
+	w := &Writer{
+		client:     client,
+		cfg:        cfg,
+		dist:       dist,
+		baseSeed:   gen.Seed(),
+		log:        log,
+		insertOpts: options.InsertMany().SetOrdered(false),
+	}
+	w.buildCollCache()
+	return w
+}
+
+// buildCollCache pre-creates *mongo.Collection handles for every target.
+// Collection objects in the Go driver are lightweight and goroutine-safe.
+func (w *Writer) buildCollCache() {
+	if w.client == nil {
+		return // nil client in unit tests
+	}
+	targets := w.dist.Targets()
+	w.collCache = make(map[distributor.Target]*mongo.Collection, len(targets))
+	for _, t := range targets {
+		w.collCache[t] = w.client.Database(t.DB).Collection(t.Collection)
 	}
 }
 
@@ -74,7 +96,7 @@ func (w *Writer) Run(ctx context.Context) error {
 	}()
 
 	// Work queue: each item is the starting seq for a batch.
-	jobs := make(chan int64, w.cfg.Concurrency*2)
+	jobs := make(chan int64, w.cfg.Concurrency*4)
 
 	var wgWorkers sync.WaitGroup
 	for i := 0; i < w.cfg.Concurrency; i++ {
@@ -150,8 +172,8 @@ func (w *Writer) workerLoop(ctx context.Context, jobs <-chan int64, gen *generat
 		docs := gen.Batch(seq, batchSize)
 		target := w.dist.Next(seq / int64(w.cfg.BatchSize))
 
-		coll := w.client.Database(target.DB).Collection(target.Collection)
-		_, err := coll.InsertMany(ctx, docs)
+		coll := w.collCache[target]
+		_, err := coll.InsertMany(ctx, docs, w.insertOpts)
 		if err != nil {
 			atomic.AddInt64(&w.stats.Errors, 1)
 			w.log.Error("insertMany failed",

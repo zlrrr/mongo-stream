@@ -14,8 +14,11 @@ type Document = bson.D
 // Generator produces random BSON documents.
 // A Generator must not be used concurrently from multiple goroutines.
 type Generator struct {
-	seed int64
-	rng  *rand.Rand
+	seed       int64
+	rng        *rand.Rand
+	payloadBuf []byte // reusable 32-byte buffer for random payload
+	hexBuf     []byte // reusable 64-byte buffer for hex encoding
+	docsBuf    []interface{}
 }
 
 // New creates a Generator. If seed == 0, a time-based seed is used.
@@ -23,7 +26,12 @@ func New(seed int64) *Generator {
 	if seed == 0 {
 		seed = time.Now().UnixNano()
 	}
-	return &Generator{seed: seed, rng: rand.New(rand.NewSource(seed))} //nolint:gosec
+	return &Generator{
+		seed:       seed,
+		rng:        rand.New(rand.NewSource(seed)), //nolint:gosec
+		payloadBuf: make([]byte, 32),
+		hexBuf:     make([]byte, 64),
+	}
 }
 
 // Seed returns the seed that was used to initialise this Generator.
@@ -37,9 +45,10 @@ var tagPool = []string{
 
 // Next generates the document at the given sequence index.
 func (g *Generator) Next(seq int64) Document {
-	payloadBytes := make([]byte, 32)
-	_, _ = g.rng.Read(payloadBytes)
-	payload := hex.EncodeToString(payloadBytes)
+	// Fill pre-allocated buffer with random bytes, then hex-encode in place.
+	g.fillRandBytes()
+	hex.Encode(g.hexBuf, g.payloadBuf)
+	payload := string(g.hexBuf) // copies into immutable string
 
 	tagCount := g.rng.Intn(3) + 1
 	tags := make([]string, tagCount)
@@ -56,9 +65,38 @@ func (g *Generator) Next(seq int64) Document {
 	}
 }
 
+// fillRandBytes fills payloadBuf using Int63 (8 bytes at a time)
+// instead of rng.Read which is slower on older Go versions.
+func (g *Generator) fillRandBytes() {
+	buf := g.payloadBuf
+	for i := 0; i < len(buf); i += 8 {
+		val := g.rng.Int63()
+		remaining := len(buf) - i
+		if remaining >= 8 {
+			buf[i] = byte(val)
+			buf[i+1] = byte(val >> 8)
+			buf[i+2] = byte(val >> 16)
+			buf[i+3] = byte(val >> 24)
+			buf[i+4] = byte(val >> 32)
+			buf[i+5] = byte(val >> 40)
+			buf[i+6] = byte(val >> 48)
+			buf[i+7] = byte(val >> 56)
+		} else {
+			for j := 0; j < remaining; j++ {
+				buf[i+j] = byte(val >> (j * 8))
+			}
+		}
+	}
+}
+
 // Batch generates n documents starting at seq.
+// The returned slice is reused across calls — callers must consume it
+// (e.g. via InsertMany) before calling Batch again.
 func (g *Generator) Batch(seq int64, n int) []interface{} {
-	docs := make([]interface{}, n)
+	if cap(g.docsBuf) < n {
+		g.docsBuf = make([]interface{}, n)
+	}
+	docs := g.docsBuf[:n]
 	for i := range docs {
 		docs[i] = g.Next(seq + int64(i))
 	}
